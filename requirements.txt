@@ -1,0 +1,10 @@
+pandas~=2.1.4
+numpy~=1.26.2
+scipy~=1.11.4
+swifter~=1.4.0
+spacy~=3.7.2
+gensim~=4.3.2
+nltk~=3.8.1
+setuptools~=59.6.0
+lxml~=5.0.0
+tqdm~=4.66.1
