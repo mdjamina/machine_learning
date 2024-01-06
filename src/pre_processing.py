@@ -1,19 +1,15 @@
-
 """Ce script effectue les étapes nécessaires pour prétraiter le corpus, y compris la tokenisation, la suppression des
 stop words et la lemmatisation. Contribue à une meilleure qualité des données d'entraînement.
 """
-
-
-import csv
+import argparse
 import re
-import pandas as pd
-from pathlib import Path
-from lxml import etree as et
-import spacy
-from spacy.lang.fr.stop_words import STOP_WORDS
 import timeit as ti
+from pathlib import Path
+import pandas as pd
+import spacy
+from lxml import etree as et
+from spacy.lang.fr.stop_words import STOP_WORDS
 from tqdm import tqdm
-
 
 
 def replace_characters(match: re.Match) -> str:
@@ -37,7 +33,8 @@ def replace_characters(match: re.Match) -> str:
         '”': '"',
         '–': '-',
         '—': '-',
-        '…': '...',
+        '…': ' ',
+        u'\xa0': ' ',
     }
 
     return replacements[char]
@@ -90,18 +87,18 @@ def fix_file_source(pathfile: str) -> Path:
     return pathfile_fixed
 
 
-def parser(pathfile: str, cleanfile: bool = True) -> list:
+def parser(pathfile: str, cleaning: bool = True) -> list:
     """Parser le fichier xml
 
     Args:
         pathfile (str): chemin du fichier xml
-        cleanfile (bool, optional): nettoyer le fichier xml. Defaults to False.
+        cleaning (bool, optional): nettoyer le fichier xml. Defaults to False.
 
     Yields:
         list: liste des documents
     """
 
-    if cleanfile:
+    if cleaning:
         pathfile = fix_file_source(pathfile)
 
     # Parser le fichier XML avec lxml pour plus de performance
@@ -119,60 +116,15 @@ def parser(pathfile: str, cleanfile: bool = True) -> list:
         yield id_doc, parti, text
 
 
-def export_to_csv(pathfile: str, delimiter: str = ';', quotechar='"', quoting=csv.QUOTE_MINIMAL) -> Path:
-    """générer un fichier csv à partir d'un fichier xml
-    en utilsant la fonction func pour parser le fichier xml
-
-    Args:
-        pathfile (str): chemin du fichier xml
-        delimiter (str, optional): délimiteur. Defaults to ';'.
-        quotechar (str, optional): caractère de citation. Defaults to '"'.
-        quoting ([type], optional): type de citation. Defaults to csv.QUOTE_MINIMAL.
-
-    Returns:
-        str: chemin du fichier csv généré
-    """
-    pathfile = Path(pathfile)
-    path_csv = pathfile.parent / f"{pathfile.stem}.csv"
-
-    with path_csv.open('w') as f:
-        csvfile = csv.writer(f, delimiter=delimiter, quotechar=quotechar, quoting=quoting)
-        csvfile.writerow(['id', 'parti', 'text'])
-        for id_doc, parti, text in parser(str(pathfile)):
-            csvfile.writerow([id_doc, parti, text])
-
-    return path_csv
-
-
-def export_to_parquet(pathfile: str, cleanfile: bool = True) -> Path:
-    """générer un fichier parquet à partir d'un fichier xml
-    en utilsant la fonction func pour parser le fichier xml
-
-    Args:
-        pathfile (str): chemin du fichier xml
-        cleanfile (bool, optional): nettoyer le fichier xml. Defaults to True.
-    Returns:
-        str: chemin du fichier parquet généré
-    """
-
-    pathfile = Path(pathfile)
-    path_parquet = pathfile.parent / f"{pathfile.stem}.parquet"
-
-    data = []
-    for id_doc, parti, text in parser(str(pathfile), cleanfile=cleanfile):
-        data.append([id_doc, parti, text])
-
-    pd.DataFrame(data, columns=['id', 'parti', 'text']).to_parquet(path_parquet)
-
-    return path_parquet
-
-
-def load_corpus(pathfile: str, clean: bool = True) -> pd.DataFrame:
+def load_corpus(pathfile: str, cleaning: bool = True, size: int = None, random_state: int = None) -> pd.DataFrame:
     """Charger le corpus à partir d'un fichier parquet ou xml
 
     Args:
-        pathfile (str): chemin du fichier parquet
-        clean (bool, optional): nettoyer le fichier xml. Defaults to False.
+        cleaning:
+        random_state: graine aléatoire  pour la sélection des données
+        size: taille du corpus à traiter
+        pathfile (str): chemin du fichier
+
 
     Returns:
         pd.DataFrame: corpus
@@ -184,15 +136,15 @@ def load_corpus(pathfile: str, clean: bool = True) -> pd.DataFrame:
 
     # chargement à partir d'un fichier xml
     if pathfile.suffix == '.xml':
-        data = pd.DataFrame(parser(str(pathfile), cleanfile=clean), columns=['id', 'parti', 'text'])
-
-    # chargement à partir d'un fichier parquet
-    elif pathfile.suffix == '.parquet':
-        data = pd.read_parquet(pathfile)
+        data = pd.DataFrame(parser(str(pathfile), cleaning=cleaning), columns=['id', 'parti', 'text'])
 
     else:
         raise ValueError(f"file format {pathfile.suffix} not supported")
-
+    # échantillonage du corpus
+    if size:
+        # selectionner même nombre de données de chaque parti de manière aléatoire
+        data = data.groupby('parti').apply(lambda x: x.sample(size // len(data.parti.unique()),
+                                                              random_state=random_state)).reset_index(drop=True)
     return data
 
 
@@ -208,15 +160,7 @@ def nlp_load():
     return spacy.load('fr_core_news_lg', disable=disable)
 
 
-# initialisation du modèle
-print("chargement du modèle spacy")
-start = ti.default_timer()
-nlp = nlp_load()
-stop = ti.default_timer()
-print('le temps chargement du modèle: ', stop - start)
-
-
-def nlp_preprocess(text: str) -> tuple:
+def nlp_preprocess(text: str) -> list:
     """Prétraiter le texte
 
     Args:
@@ -229,7 +173,7 @@ def nlp_preprocess(text: str) -> tuple:
     doc = nlp(text)
 
     # ENR : entités nommées
-    entities = [(ent.text, ent.label_) for ent in doc.ents]
+    # entities = [(ent.text, ent.label_) for ent in doc.ents]
 
     document = []
 
@@ -242,64 +186,39 @@ def nlp_preprocess(text: str) -> tuple:
                        token.is_digit
                        ])
 
-        document.append({'form': token.text, 'lemma': token.lemma_, 'pos': token.pos_, 'is_stop': is_stop})
+        document.append(
+            {'form': token.text, 'lemma': token.lemma_.lower(), 'pos': token.pos_,
+             'is_stop': is_stop})
 
-    return document, entities
-
-
-def pipline_preprocess(text: list) -> tuple:
-    """Prétraiter le texte
-
-    Args:
-        text (list): texte à prétraiter
-
-    Returns:
-        tuple: texte prétraité
-    """
-
-    for doc in nlp.pipe(text, batch_size=1000, n_process=4):
-        # print("doc: ", type(doc))
-        entities = [(ent.text, ent.label_) for ent in doc.ents]
-        docuement = []
-        for token in doc:
-            is_stop = any([token.lemma_ in STOP_WORDS,
-                           token.text in STOP_WORDS,
-                           token.is_stop,
-                           token.is_punct,
-                           token.is_space,
-                           token.is_digit
-                           ])
-
-            docuement.append({'form': token.text, 'lemma': token.lemma_, 'pos': token.pos_, 'is_stop': is_stop})
-
-        yield docuement, entities
+    # return document, entities
+    return document
 
 
-def preprocess_corpus(pathfile: str) -> Path:
-    """Prétraiter le corpus
-
-    Args:
-        pathfile (str): chemin du fichier corpus
-
-    Returns:
-        Path: chemin du fichier corpus prétraité (joblib)
-
-    """
+def preprocess_corpus(pathfile: str, size: int = None, random_state: int = 85, cleaning: bool = False) -> Path:
+    """Prétraiter le corpus"""
 
     print("chargement du corpus")
 
-    pathfile_pickle = Path(pathfile).parent / f"{Path(pathfile).stem}_preprocessed.dat"
-    pthfile_parquet = Path(pathfile).parent / f"{Path(pathfile).stem}_preprocessed.parquet"
+    pathfile_pickle = Path(pathfile).parent / f"{Path(pathfile).stem}_pre.pkl"
 
     # chargement du corpus
-    corpus = load_corpus(path_file)
+    corpus = load_corpus(pathfile=pathfile, size=size, random_state=random_state, cleaning=cleaning)
+
+    print("chargement du modèle spacy")
+    start = ti.default_timer()
+    global nlp
+    nlp = nlp_load()
+    stop = ti.default_timer()
+    print('le temps chargement du modèle spacy: ', stop - start)
 
     # prétraitement du corpus
 
     print("prétraitement du corpus")
     start0 = ti.default_timer()
 
-    corpus['doc'], corpus['entities'] = zip(*corpus['text'].map(nlp_preprocess))
+    #corpus['docs'], corpus['entities'] = zip(*corpus['text'].map(nlp_preprocess))
+
+    corpus['docs'] = corpus['text'].map(nlp_preprocess)
     stop0 = ti.default_timer()
     print('le temps de prétraitement du corpus: ', stop0 - start0)
 
@@ -307,21 +226,72 @@ def preprocess_corpus(pathfile: str) -> Path:
     print("sauvegarde du corpus prétraité")
 
     corpus.to_pickle(pathfile_pickle)
-    corpus.to_parquet(pthfile_parquet)
+
+    print("corpus prétraité dans: ", pathfile_pickle)
+
+    print(corpus.head(100))
 
     return pathfile_pickle
 
 
+"""
+def anonymize(text: str, ent: list) -> str:
+    ""Anonymiser les entités nommées
+    ""
+
+    print("ent",ent)
+
+    for e in ent:
+        text = re.sub(e[0], e[1], text)
+
+    print("text", text)
+
+    return text
+ tmp['text'] = tmp.apply(lambda x: anonymize(x.text, x.entities), axis=1)
+"""
+
+
+def main():
+    """Exécuter le script
+    Args
+
+    """
+    # data directory
+    arg = argparse.ArgumentParser()
+
+    arg.add_argument('--datafile'
+                     , type=str
+                     , required=True
+                     , help='chemin du fichier de données')
+    arg.add_argument('--size'
+                     , type=int, required=False
+                     , help='taille du corpus à traiter'
+                     , default=None)
+
+    arg.add_argument('--random_state'
+                     , type=int, required=False
+                     , help='graine aléatoire pour la sélection des données'
+                     , default=85)
+
+    arg.add_argument('--cleaning', type=bool, required=False, help='nettoyer le fichier xml'
+                     , default=False)
+
+    args = arg.parse_args()
+
+    datafile = args.datafile
+    size = args.size
+    random_state = args.random_state
+    cleaning = args.cleaning
+    #
+
+    # initialisation du modèle
+
+    # load data
+
+    output = preprocess_corpus(pathfile=datafile, size=size, random_state=random_state, cleaning=cleaning)
+
+    print("fichier dans: ", output)
+
+
 if __name__ == "__main__":
-    # test de la load_corpus
-    path_file = "/home/amina/workspace/github/apprentissage-artificiel/data/deft09_parlement_appr_fr_dev.xml"
-
-    print("chargement du corpus")
-    print("fixer le fichier source")
-    start1 = ti.default_timer()
-
-    path_file = export_to_parquet(path_file)
-
-    filename = preprocess_corpus(str(path_file))
-
-    print("fichier dans: ", filename)
+    main()
