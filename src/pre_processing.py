@@ -33,7 +33,8 @@ def replace_characters(match: re.Match) -> str:
         '”': '"',
         '–': '-',
         '—': '-',
-        '…': '...',
+        '…': ' ',
+        u'\xa0': ' ',
     }
 
     return replacements[char]
@@ -122,7 +123,7 @@ def load_corpus(pathfile: str, cleaning: bool = True, size: int = None, random_s
         cleaning:
         random_state: graine aléatoire  pour la sélection des données
         size: taille du corpus à traiter
-        pathfile (str): chemin du fichier parquet
+        pathfile (str): chemin du fichier
 
 
     Returns:
@@ -137,10 +138,6 @@ def load_corpus(pathfile: str, cleaning: bool = True, size: int = None, random_s
     if pathfile.suffix == '.xml':
         data = pd.DataFrame(parser(str(pathfile), cleaning=cleaning), columns=['id', 'parti', 'text'])
 
-    # chargement à partir d'un fichier parquet
-    elif pathfile.suffix == '.parquet':
-        data = pd.read_parquet(pathfile)
-
     else:
         raise ValueError(f"file format {pathfile.suffix} not supported")
     # échantillonage du corpus
@@ -148,7 +145,6 @@ def load_corpus(pathfile: str, cleaning: bool = True, size: int = None, random_s
         # selectionner même nombre de données de chaque parti de manière aléatoire
         data = data.groupby('parti').apply(lambda x: x.sample(size // len(data.parti.unique())
                                                               , random_state=random_state)).reset_index(drop=True)
-
     return data
 
 
@@ -164,7 +160,7 @@ def nlp_load():
     return spacy.load('fr_core_news_lg', disable=disable)
 
 
-def nlp_preprocess(text: str) -> tuple:
+def nlp_preprocess(text: str) -> list:
     """Prétraiter le texte
 
     Args:
@@ -177,7 +173,7 @@ def nlp_preprocess(text: str) -> tuple:
     doc = nlp(text)
 
     # ENR : entités nommées
-    entities = [(ent.text, ent.label_) for ent in doc.ents]
+    #entities = [(ent.text, ent.label_) for ent in doc.ents]
 
     document = []
 
@@ -191,10 +187,11 @@ def nlp_preprocess(text: str) -> tuple:
                        ])
 
         document.append(
-            {token.text: {'form': token.text.lower(), 'lemma': token.lemma_.lower(), 'pos': token.pos_,
-                          'is_stop': is_stop}})
+            {'form': token.text, 'lemma': token.lemma_.lower(), 'pos': token.pos_,
+             'is_stop': is_stop})
 
-    return document, entities
+    #return document, entities
+    return document
 
 
 def preprocess_corpus(pathfile: str, size: int = None, random_state: int = 85, cleaning: bool = False) -> Path:
@@ -217,12 +214,21 @@ def preprocess_corpus(pathfile: str, size: int = None, random_state: int = 85, c
     # chargement du corpus
     corpus = load_corpus(pathfile=pathfile, size=size, random_state=random_state, cleaning=cleaning)
 
+    print("chargement du modèle spacy")
+    start = ti.default_timer()
+    global nlp
+    nlp = nlp_load()
+    stop = ti.default_timer()
+    print('le temps chargement du modèle spacy: ', stop - start)
+
     # prétraitement du corpus
 
     print("prétraitement du corpus")
     start0 = ti.default_timer()
 
-    corpus['docs'], corpus['entities'] = zip(*corpus['text'].map(nlp_preprocess))
+    #corpus['docs'], corpus['entities'] = zip(*corpus['text'].map(nlp_preprocess))
+
+    corpus['docs'] = corpus['text'].map(nlp_preprocess)
     stop0 = ti.default_timer()
     print('le temps de prétraitement du corpus: ', stop0 - start0)
 
@@ -236,6 +242,23 @@ def preprocess_corpus(pathfile: str, size: int = None, random_state: int = 85, c
     print(corpus.head(100))
 
     return pathfile_pickle
+
+
+"""
+def anonymize(text: str, ent: list) -> str:
+    ""Anonymiser les entités nommées
+    ""
+
+    print("ent",ent)
+
+    for e in ent:
+        text = re.sub(e[0], e[1], text)
+
+    print("text", text)
+
+    return text
+ tmp['text'] = tmp.apply(lambda x: anonymize(x.text, x.entities), axis=1)
+"""
 
 
 def main():
@@ -262,12 +285,6 @@ def main():
     #
 
     # initialisation du modèle
-    print("chargement du modèle spacy")
-    start = ti.default_timer()
-    global nlp
-    nlp = nlp_load()
-    stop = ti.default_timer()
-    print('le temps chargement du modèle spacy: ', stop - start)
 
     # load data
 
