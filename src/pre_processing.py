@@ -143,8 +143,8 @@ def load_corpus(pathfile: str, cleaning: bool = True, size: int = None, random_s
     # échantillonage du corpus
     if size:
         # selectionner même nombre de données de chaque parti de manière aléatoire
-        data = data.groupby('parti').apply(lambda x: x.sample(size // len(data.parti.unique())
-                                                              , random_state=random_state)).reset_index(drop=True)
+        data = data.groupby('parti').apply(lambda x: x.sample(size // len(data.parti.unique()),
+                                                              random_state=random_state)).reset_index(drop=True)
     return data
 
 
@@ -173,7 +173,7 @@ def nlp_preprocess(text: str) -> list:
     doc = nlp(text)
 
     # ENR : entités nommées
-    #entities = [(ent.text, ent.label_) for ent in doc.ents]
+    # entities = [(ent.text, ent.label_) for ent in doc.ents]
 
     document = []
 
@@ -190,26 +190,16 @@ def nlp_preprocess(text: str) -> list:
             {'form': token.text, 'lemma': token.lemma_.lower(), 'pos': token.pos_,
              'is_stop': is_stop})
 
-    #return document, entities
+    # return document, entities
     return document
 
 
 def preprocess_corpus(pathfile: str, size: int = None, random_state: int = 85, cleaning: bool = False) -> Path:
-    """Prétraiter le corpus
-
-    Args:
-        random_state:
-        size: taille du corpus à traiter
-        pathfile (str): chemin du fichier corpus
-
-    Returns:
-        Path: chemin du fichier corpus prétraité (joblib)
-
-    """
+    """Prétraiter le corpus"""
 
     print("chargement du corpus")
 
-    pathfile_pickle = Path(pathfile).parent / f"{Path(pathfile).stem}_pre.dat"
+    pathfile_pickle = Path(pathfile).parent / f"{Path(pathfile).stem}_pre.pkl"
 
     # chargement du corpus
     corpus = load_corpus(pathfile=pathfile, size=size, random_state=random_state, cleaning=cleaning)
@@ -268,11 +258,21 @@ def main():
     """
     # data directory
     arg = argparse.ArgumentParser()
-    arg.add_argument('--datafile', type=str, required=True, help='chemin du fichier de données')
-    arg.add_argument('--size', type=int, required=False, help='taille du corpus à traiter'
+
+    arg.add_argument('--datafile'
+                     , type=str
+                     , required=True
+                     , help='chemin du fichier de données')
+    arg.add_argument('--size'
+                     , type=int, required=False
+                     , help='taille du corpus à traiter'
                      , default=None)
-    arg.add_argument('--random_state', type=int, required=False, help='graine aléatoire pour la sélection des données'
+
+    arg.add_argument('--random_state'
+                     , type=int, required=False
+                     , help='graine aléatoire pour la sélection des données'
                      , default=85)
+
     arg.add_argument('--cleaning', type=bool, required=False, help='nettoyer le fichier xml'
                      , default=False)
 
